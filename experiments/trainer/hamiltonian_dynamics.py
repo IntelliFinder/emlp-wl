@@ -41,6 +41,7 @@ def symplectic_form(z):
 def hamiltonian_dynamics(hamiltonian, z,t):
     """ Takes a Hamiltonian function, a state vector z, and an unused time t
         to compute the hamiltonian dynamics J∇H"""
+    #print(z)
     grad_h = grad(hamiltonian) # ∇H
     gh = grad_h(z) # ∇H(z)
     return symplectic_form(gh) # J∇H(z)

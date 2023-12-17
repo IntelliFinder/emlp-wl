@@ -20,6 +20,28 @@ from objax.nn.init import orthogonal
 from scipy.special import binom
 from jax import jit,vmap
 from functools import lru_cache as cache
+import sys
+from emlp.DisGNN.kDisGNN_model import kDisGNN
+from emlp.DisGNN.script_utils import trainer_setup, test, train, get_cfgs
+from emlp.DisGNN.utils.activation_fns import activation_fn_map
+import torch
+
+'''
+    get hparams
+'''
+model_name   = "2FDis" 
+dataset_name = "qm9"
+config_path = "/home/snirhordan/ScalarEMLP/emlp/DisGNN/{}_{}.yaml".format(model_name, dataset_name) #TODO change config path
+
+config = get_cfgs(config_path, merge_list, None, data_name)
+
+print("-"*20)
+print(config)
+print("-"*20)
+
+scheduler_config = config.scheduler_config
+optimizer_config = config.optimizer_config
+model_config = config.model_config
 
 def Sequential(*args):
     """ Wrapped to mimic pytorch syntax"""
@@ -414,8 +436,9 @@ def comp_inner_products_jax(x:jnp.ndarray, take_sqrt=True):
         xxsqrt = jnp.sqrt(jnp.einsum('bix,bix->bi', x, x)) # (n, 4)
         scalars = jnp.concatenate([xxsqrt, scalars], axis = -1)  # (n, 20)
     return scalars 
-    
-def comp_gram_matrix_jax(x:jnp.ndarray, n_hidden, take_sqrt=True):
+
+@export    
+def comp_dist_matrix_jax(x:jnp.ndarray, g:jnp.ndarray=jnp.array([0,0,-1])):
     """
     INPUT: batch (q1, q2, p1, p2)
     N: number of datasets
@@ -423,9 +446,16 @@ def comp_gram_matrix_jax(x:jnp.ndarray, n_hidden, take_sqrt=True):
     x: numpy tensor of size [N, 4, dim] 
     """ 
     n = x.shape[0] #TODO: take_sqrt ?
-    
-    scalars = jnp.einsum('bix,bjx->bij', x, x).reshape(n, -1)# (n,4,4)
-    return scalars # (n, 16)
+    repeat_g = g.repeat(n,1).unsqueeze(1)
+    mat = torch.cat([x, repeat_g], dim=1)
+    batched_dist = torch.cdist(mat, mat)
+    #TODO: add norms of for momentum features
+    norms = torch.norm(x[:,1:], dim=2) #TODO check momentum are indeed third and fourth in input
+    zeros = torch.zeros((mat.size(0), mat.size(1)),  device=norms.device)
+    zeros[:,1:3] = norms
+    norms_diag = torch.diag_embed(zeros)
+    assert(norms_diag.size() == batched_dist.size())
+    return norms_diag + batched_dist # (n, 16)
 
 def compute_scalars_jax(x:jnp.ndarray, g:jnp.ndarray=jnp.array([0,0,-1])):
     """Input x of dim [n, 4, 3]"""     
@@ -578,23 +608,44 @@ class InvarianceLayer_objax(Module):
         n_layers, 
     ):
         super().__init__()
-        self.mlp = BasicMLP_objax(
-            n_in=30, n_out=1, n_hidden=n_hidden, n_layers=n_layers
-        ) 
+        #self.mlp = BasicMLP_objax(
+        #    n_in=30, n_out=1, n_hidden=n_hidden, n_layers=n_layers
+        #) 
         
         self.g = jnp.array([0,0,-1])
-    
-    def H(self, x):  
+        self.kDisGNN = kDisGNN(
+            z_hidden_dim=model_config.z_hidden_dim,
+            ef_dim=model_config.ef_dim,
+            rbf=model_config.rbf,
+            max_z=model_config.max_z,
+            rbound_upper=model_config.rbound_upper,
+            rbf_trainable=model_config.rbf_trainable,
+            activation_fn=activation_fn_map[model_config.activation_fn_name],
+            k_tuple_dim=model_config.k_tuple_dim,
+            block_num=model_config.block_num,
+            pooling_level=model_config.get("pooling_level"),
+            e_mode=model_config.get("e_mode"),
+            model_name=model_name,
+            use_mult_lin=model_config.get("use_mult_lin"),
+            interaction_residual=model_config.get("interaction_residual"),
+            )
+
+
+    def H(self, x):
         scalars = compute_scalars_jax(x, self.g)
+        #dist_mat = comp_dist_matrix_jax(x, self.g)
+        #print(dist_mat)
         out = self.mlp(scalars)
-        return out.sum()  
-    
+        return None#out.sum() 
+        
     def __call__(self, x:jnp.ndarray):
         x = x.reshape(-1,4,3) # (n,4,3)
-        return self.H(x)
-        
+        zeros = torch.zeros(x.size())
+        x = torch.add(x.clone(), zeros)
+        return None# self.H(x)
+
 @export
-class InvarianceLayer_WL_objax(Module):
+class InvarianceLayerWL_objax(Module): #TODO only for Hamiltonian
     def __init__(
         self,  
         n_hidden, 
@@ -602,14 +653,31 @@ class InvarianceLayer_WL_objax(Module):
     ):
         super().__init__()
         self.mlp = BasicMLP_objax(
-            n_in=(10 + 16*10), n_out=1, n_hidden=n_hidden, n_layers=n_layers
+            n_in=30, n_out=1, n_hidden=n_hidden, n_layers=n_layers
         ) 
         self.g = jnp.array([0,0,-1])
+        self.kDisGNN = kDisGNN(
+            z_hidden_dim=model_config.z_hidden_dim,
+            ef_dim=model_config.ef_dim,
+            rbf=model_config.rbf,
+            max_z=model_config.max_z,
+            rbound_upper=model_config.rbound_upper,
+            rbf_trainable=model_config.rbf_trainable,
+            activation_fn=activation_fn_map[model_config.activation_fn_name],
+            k_tuple_dim=model_config.k_tuple_dim,
+            block_num=model_config.block_num,
+            pooling_level=model_config.get("pooling_level"),
+            e_mode=model_config.get("e_mode"),
+            model_name=model_name,
+            use_mult_lin=model_config.get("use_mult_lin"),
+            interaction_residual=model_config.get("interaction_residual"),
+            )
     
-    def H(self, x):  
-        scalars = compute_scalars_jax_wl(x, self.g)
-        out = self.mlp(scalars)
-        return out.sum()  
+    def H(self, x):
+        #scalars = compute_scalars_jax(x, self.g)
+        dist_mat = comp_dist_matrix_jax(x, self.g)
+        out = self.kDisGNN(dist_mat)
+        return out
     
     def __call__(self, x:jnp.ndarray):
         x = x.reshape(-1,4,3) # (n,4,3)

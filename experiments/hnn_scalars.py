@@ -1,5 +1,5 @@
-
-from emlp.nn import InvarianceLayer_objax,  compute_scalars,radial_basis_transform# InvarianceLayer_WL_objax,
+import sys, os
+from emlp.nn import InvarianceLayer_objax,  compute_scalars,radial_basis_transform#, InvarianceLayerWL_objax
 from trainer.hamiltonian_dynamics import IntegratedDynamicsTrainer,DoubleSpringPendulum,hnnScalars_trial
 from torch.utils.data import DataLoader
 from oil.utils.utils import cosLr,FixedNumpySeed,FixedPytorchSeed
@@ -34,7 +34,9 @@ def makeTrainerScalars(*,dataset=DoubleSpringPendulum,num_epochs=2000,ndata=5000
                    num_workers=0,pin_memory=False)) for k,v in datasets.items()}
     dataloaders['Train'] = dataloaders['train']
     
-    model = InvarianceLayer_objax(**net_config)
+    #sys.exit('exited in make trainer scalars')
+    
+    model =  InvarianceLayer_objax(**net_config)
     opt_constr = objax.optimizer.Adam
     # lr_sched = lambda e: lr#*cosLr(num_epochs)(e)#*min(1,e/(num_epochs/10))
     lr_sched = lambda e: lr if (e < 200) else (lr*0.4 if e < 1000 else (lr*0.1))   
