@@ -1,7 +1,7 @@
 import torch.nn as nn
 from torch import Tensor
 import torch
-from layers.basis_layers import rbf_class_mapping
+from .basis_layers import rbf_class_mapping
 
 
 class Mol2Graph(nn.Module):
@@ -30,7 +30,7 @@ class Mol2Graph(nn.Module):
         
         B, N = dist_mat.shape[0], dist_mat.shape[1]
        
-        ef = self.rbf_fn(el.reshape(-1, 1)).reshape(B, N, N, -1) # (B, N, N, ef_dim)
+        ef = self.rbf_fn(dist_mat.reshape(-1, 1)).reshape(B, N, N, -1) # (B, N, N, ef_dim)
         
         return ef
 

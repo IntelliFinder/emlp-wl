@@ -1,5 +1,5 @@
 import torch.nn as nn
-from layers.basic_layers import Residual, Dense
+from ..basic_layers import Residual, Dense
 import torch
 import ase
 
@@ -10,24 +10,11 @@ class TwoOrderOutputBlock(nn.Module):
                  **kwargs
                  ):
         super().__init__()
-        self.output_fn = nn.Sequential(
+        self.output_fn = nn.Sequential( #TODO: too massive
             Residual(
                 mlp_num=2,
                 hidden_dim=2 * hidden_dim,
                 activation_fn=activation_fn,
-                bias=True,
-                ),
-            Residual(
-                mlp_num=2,
-                hidden_dim=2 * hidden_dim,
-                activation_fn=activation_fn,
-                bias=True,
-                ),
-            Residual(
-                mlp_num=2,
-                hidden_dim=2 * hidden_dim,
-                activation_fn=activation_fn,
-                add_end_activation=False,
                 bias=True,
                 ),
             Dense(

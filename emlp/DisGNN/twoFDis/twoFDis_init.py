@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-from layers.basic_layers import Residual, Dense
+from ..basic_layers import Residual, Dense
 
 
 class TwoFDisInit(nn.Module):
@@ -13,24 +13,6 @@ class TwoFDisInit(nn.Module):
                  ):
         super().__init__()
 
-        self.z_lins = nn.ModuleList(
-                [
-                    nn.Sequential(
-                        Dense(
-                            in_features=z_hidden_dim,
-                            out_features=k_tuple_dim,
-                            activation_fn=activation_fn
-                        ),
-                    ) for _ in range(2)
-                    ]
-                )
-
-        self.ef_lin = Dense(
-            in_features=ef_dim,
-            out_features=k_tuple_dim,
-            bias=False,
-            activation_fn=None
-        )
 
         self.pattern_embedding = nn.Embedding(
             num_embeddings=3,

@@ -4,7 +4,7 @@ from .Mol2Graph import Mol2Graph
 from .utils.loss_fns import loss_fn_map
 from .utils.activation_fns import activation_fn_map
 from .utils.EMA import ExponentialMovingAverage
-from .torch.nn.utils.clip_grad import clip_grad_norm_
+from torch.nn.utils.clip_grad import clip_grad_norm_
 import torch
 from .twoFDis.twoFDis_init import TwoFDisInit
 from .twoFDis.twoFDis_interaction import TwoFDisLayer
@@ -44,30 +44,12 @@ class kDisGNN(nn.Module):
         block_num,
         pooling_level,
         e_mode,
-        qm9,
         model_name,
-        data_name,
         use_mult_lin,
         interaction_residual,
-        global_y_mean,
-        global_y_std,
     ):
         super().__init__()
-        
-        self.global_y_mean = global_y_mean
-        self.global_y_std = global_y_std
-        if qm9 and model_name == "2FDis" and (int(data_name) == 0):
-            output_layer = output_layer_dict["2FDisDip"]
-            self.global_y_std = 1.
-            self.global_y_mean = 0.
-            print("Using 2FDisDip as output layer")
-        elif qm9 and model_name == "2FDis" and (int(data_name) == 5):
-            output_layer = output_layer_dict["2FDisElc"]
-            self.global_y_std = 1.
-            self.global_y_mean = 0.
-            print("Using 2FDisElc as output layer")
-        else:
-            output_layer = output_layer_dict[model_name]
+        output_layer = output_layer_dict[model_name]
         
         # Transform Molecule to Graph
         self.M2G = Mol2Graph(
@@ -122,13 +104,11 @@ class kDisGNN(nn.Module):
             )
         
         
-        self.predict_force = not qm9
         self.interaction_residual = interaction_residual
 
 
     def forward(self, dist_mat):
-        #if self.predict_force: #TODO required in Hamiltonian?
-        #    batch_data.pos.requires_grad_(True)
+        dist_mat.requires_grad_(True)
         
         # Molecule to Graphs
         ef = self.M2G(dist_mat)  

@@ -33,7 +33,7 @@ model_name   = "2FDis"
 dataset_name = "qm9"
 config_path = "/home/snirhordan/ScalarEMLP/emlp/DisGNN/{}_{}.yaml".format(model_name, dataset_name) #TODO change config path
 
-config = get_cfgs(config_path, merge_list, None, data_name)
+config = get_cfgs(config_path, None, None, "ethanol")
 
 print("-"*20)
 print(config)
@@ -437,25 +437,46 @@ def comp_inner_products_jax(x:jnp.ndarray, take_sqrt=True):
         scalars = jnp.concatenate([xxsqrt, scalars], axis = -1)  # (n, 20)
     return scalars 
 
-@export    
-def comp_dist_matrix_jax(x:jnp.ndarray, g:jnp.ndarray=jnp.array([0,0,-1])):
+def distance_squared_matrix(x:jnp.array):
+    """
+    Recieves x (B, N, 3)
+    Returns dists (B, N, N) batch of squared distance matrices for each point cloud
+    """
+    # this has the same affect as taking the dot product of each row with itself
+    x2 = jnp.sum(jnp.square(x), axis=2) # shape of (m)
+    xy = jnp.matmul(x, jnp.transpose(x,axes=(0,2,1)))
+    x2 = x2.reshape(x2.shape[0],-1, 1)
+    x3 = x2.reshape(x2.shape[0],1, -1)
+    dists = x3 - 2*xy + x2 # (m, 1) repeat columnwise + (m, n) + (n) repeat rowwise -> (m, n)
+    return dists
+
+def comp_dist_matrix_jax(x:jnp.array, g:jnp.array=jnp.array([0,0,-1])):
     """
     INPUT: batch (q1, q2, p1, p2)
     N: number of datasets
-    dim: dimension  
-    x: numpy tensor of size [N, 4, dim] 
-    """ 
+    dim: dimension
+    x: numpy tensor of size [N, 4, dim]
+    """
     n = x.shape[0] #TODO: take_sqrt ?
-    repeat_g = g.repeat(n,1).unsqueeze(1)
-    mat = torch.cat([x, repeat_g], dim=1)
-    batched_dist = torch.cdist(mat, mat)
-    #TODO: add norms of for momentum features
-    norms = torch.norm(x[:,1:], dim=2) #TODO check momentum are indeed third and fourth in input
-    zeros = torch.zeros((mat.size(0), mat.size(1)),  device=norms.device)
-    zeros[:,1:3] = norms
-    norms_diag = torch.diag_embed(zeros)
-    assert(norms_diag.size() == batched_dist.size())
-    return norms_diag + batched_dist # (n, 16)
+    repeat_g = jnp.tile(g, (n,1))
+    repeat_g = jnp.expand_dims(repeat_g, axis=1)
+    mat = jnp.concatenate([x, repeat_g], axis=1)
+    batched_dist = distance_squared_matrix(mat)#tested
+    #add norms of for momentum features
+    norms = jnp.linalg.norm(x[:,2:], axis=2)
+    two_zeros = jnp.zeros((x.shape[0], 2))
+    one_zero  = jnp.zeros((x.shape[0], 1))
+    norms = jnp.concatenate([two_zeros, norms, one_zero], axis=1)
+    norms_diag = jnp.diagflat(norms)
+    embed_diag = []
+    stride = norms.shape[1]
+    for k in range(0, norms_diag.shape[0], stride):
+        embed_diag.append( jnp.expand_dims(norms_diag[k:(k+stride), k:(k+stride)], axis=0)  )#TODO: finish unpacking block diags
+    norms_diag = jnp.concatenate(embed_diag, axis=0)
+    #print(norms_diag)
+    #assert add op is legal
+    assert(norms_diag.shape == batched_dist.shape)
+    return jnp.array(norms_diag + batched_dist) # (n, 16)
 
 def compute_scalars_jax(x:jnp.ndarray, g:jnp.ndarray=jnp.array([0,0,-1])):
     """Input x of dim [n, 4, 3]"""     
@@ -541,28 +562,63 @@ class BasicMLP_objax_wl(Module):
     
     def __call__(self,x,training=True):
         return self.mlp(x)
-@export
-class TwoFDisLayer(Module):
+        
+@class BasicMLP_objax_wl(Module):
+    def __init__(
+        self,
+        n_in,
+        n_out,
+        n_hidden=32,
+        n_layers=2,
+        final_lin=False
+    ):
+        super().__init__()
+        layers = [nn.Linear(n_in, n_hidden), F.relu]
+        if not final_lin:
+            for _ in range(n_layers-1):
+                layers.append(nn.Linear(n_hidden, n_hidden))
+                layers.append(F.relu)
+            layers.append(nn.Linear(n_hidden, n_out))
+            layers.append(F.relu)
+        else:
+            for _ in range(n_layers):
+                layers.append(nn.Linear(n_hidden, n_hidden))
+                layers.append(F.relu)
+            layers.append(nn.Linear(n_hidden, n_out))
+
+        self.mlp = nn.Sequential(layers)
+
+    def __call__(self,x,training=True):
+        return self.mlp(x)
+
+def radial_basis_transform(x, nrad = 100):
+    """
+    x is a vector
+    """
+    xmax, xmin = x.max(), x.min()
+    gamma = 2*(xmax - xmin)/(nrad - 1)
+    mu    = np.linspace(start=xmin, stop=xmax, num=nrad)
+    return mu, gamma
+
+class TwoFDisLayer(Module): #TODO: test
 
     def __init__(self,
                  hidden_dim: int,
-                 sqrt: int,
                  activation_fn = F.relu,
                  **kwargs
                  ):
         super().__init__()
 
         self.hidden_dim = hidden_dim
-        
-        self.sqrt = sqrt
-        
+
         self.emb_lin_0 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
-                
+
         self.emb_lin_1 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
 
         self.emb_lin_2 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
 
         self.output_lin = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim, final_lin=True)
+
     def radial_basis_transform(self,scalars, nrad, mmin=0, mmax=10):
         """
         x is a B x N x N x n_feat
@@ -571,34 +627,79 @@ class TwoFDisLayer(Module):
         mu    = jnp.linspace(start=mmin, stop=mmax, num=nrad)
         scalars = jnp.expand_dims(scalars, axis=-1) - jnp.expand_dims(mu, axis=0) #(n,16,n_rad)
         scalars = jnp.exp(-gamma*(scalars**2)) #(n,16,n_rad)
-        return scalars         
-    def forward(self, 
-                kemb: jnp.ndarray,
-                N: int,
+        return scalars
+
+    def forward(self,
+                dist_mat: jnp.ndarray,
                 **kwargs
                 ):
         '''
             kemb: (B, N, N, hidden_dim)
         '''
-        
+        kemb = comp_dist_matrix_jax(dist_mat)
         B = kemb.shape[0]
-
+        N = kemb.shape[1]
+        
         kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim)
-        
+
         self_message, kemb_0, kemb_1 = self.emb_lin_0(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_1(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_2(jnp.copy(kemb).reshape(-1, self.hidden_dim))
-        
+
         self_message, kemb_0, kemb_1 = self_message.reshape((B,N,N,self.hidden_dim)), kemb_0.reshape((B,N,N,self.hidden_dim)), kemb_1.reshape((B,N,N,self.hidden_dim))
 
-        #kemb_0, kemb_1 = (jnp.transpose(kemb_0, (0, 3, 1, 2)), jnp.transpose(kemb_1, (0, 3, 1, 2)))
-        
-        #kemb_multed = jnp.transpose(jnp.matmul(kemb_0, kemb_1), (0, 2, 3, 1))
-        
-        #kemb_out = self.output_lin(self_message * kemb_multed) + (self_message * kemb_multed)
-        
-        return kemb
+        kemb_0, kemb_1 = (jnp.transpose(kemb_0, (0, 3, 1, 2)), jnp.transpose(kemb_1, (0, 3, 1, 2)))
 
-    def __call__(self,kemb: jnp.ndarray,  sqrt=x.shape[1]):
-            return self.forward(kemb, sqrt).reshape(kemb.shape[0], -1)
+        kemb_multed = jnp.transpose(jnp.matmul(kemb_0, kemb_1), (0, 2, 3, 1))
+
+        kemb_out = self.output_lin(self_message * kemb_multed) + (self_message * kemb_multed)
+
+        return kemb_out
+
+    def __call__(self,kemb: jnp.ndarray):
+            return self.forward(kemb)
+
+def two_order_sumpool(kemb): #TODO test
+  """Computes the second-order sum pool of a kernel embedding tensor.
+
+  Args:
+    kemb: A JAX tensor of shape (batch_size, num_patches, num_patches, embedding_dim).
+
+  Returns:
+    A JAX tensor of shape (batch_size, 2 * embedding_dim).
+  """
+  batch_size, num_patches, _, embedding_dim = kemb.shape
+  idx = jnp.arange(num_patches)
+
+  # Diagonal elements.
+  kemb_diag = kemb[:, idx, idx, :]
+  sum_kemb_diag = jnp.sum(kemb_diag, axis=1)
+
+  # Off-diagonal elements (excluding the diagonal).
+  sum_kemb_offdiag = jnp.sum(kemb, axis=(1, 2)) - sum_kemb_diag
+
+  # Concatenate diagonal and off-diagonal sums.
+  output = jnp.concatenate((sum_kemb_diag, sum_kemb_offdiag), axis=-1)
+  return output
+
+class TwoOrderOutputBlock(Module):
+    def __init__(self,
+                 hidden_dim: int,
+                 activation_fn: F.relu
+                 ):
+        super().__init__()
+        self.output_fn = BasicMLP_objax(n_in=2*hidden_dim, n_out=1)
+
+        self.sum_pooling = two_order_sumpool
+
+    def forward(self,
+                kemb: jnp.array
+                ):
+
+        output = self.output_fn(self.sum_pooling(kemb=kemb))
+        return output
+    def __call__(self,kemb: jnp.ndarray):
+            return self.forward(kemb)
+
+
 
 @export
 class InvarianceLayer_objax(Module):
@@ -613,36 +714,17 @@ class InvarianceLayer_objax(Module):
         #) 
         
         self.g = jnp.array([0,0,-1])
-        self.kDisGNN = kDisGNN(
-            z_hidden_dim=model_config.z_hidden_dim,
-            ef_dim=model_config.ef_dim,
-            rbf=model_config.rbf,
-            max_z=model_config.max_z,
-            rbound_upper=model_config.rbound_upper,
-            rbf_trainable=model_config.rbf_trainable,
-            activation_fn=activation_fn_map[model_config.activation_fn_name],
-            k_tuple_dim=model_config.k_tuple_dim,
-            block_num=model_config.block_num,
-            pooling_level=model_config.get("pooling_level"),
-            e_mode=model_config.get("e_mode"),
-            model_name=model_name,
-            use_mult_lin=model_config.get("use_mult_lin"),
-            interaction_residual=model_config.get("interaction_residual"),
-            )
-
+        self.two_fdis = TwoFDisLayer(hidden_dim=32, n_rad=4)
+        self.output   = TwoOrderOutputBlock(hidden_dim=32, activation_fn=F.relu)
 
     def H(self, x):
-        scalars = compute_scalars_jax(x, self.g)
-        #dist_mat = comp_dist_matrix_jax(x, self.g)
-        #print(dist_mat)
-        out = self.mlp(scalars)
-        return None#out.sum() 
+        out = self.two_fdis(scalars)
+        out = self.output(out)
+        return out#.sum() 
         
     def __call__(self, x:jnp.ndarray):
         x = x.reshape(-1,4,3) # (n,4,3)
-        zeros = torch.zeros(x.size())
-        x = torch.add(x.clone(), zeros)
-        return None# self.H(x)
+        return self.H(x)
 
 @export
 class InvarianceLayerWL_objax(Module): #TODO only for Hamiltonian

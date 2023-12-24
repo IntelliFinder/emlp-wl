@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from layers.basic_layers import Residual, Dense
+from ..basic_layers import Residual, Dense
 
 
 class TwoFDisLayer(nn.Module):

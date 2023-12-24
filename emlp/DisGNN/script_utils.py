@@ -4,7 +4,6 @@ from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from yacs.config import load_cfg
-from lightningModule.basic_callbacks import basic_train_callback
 from typing import List, Optional
 import sys
 sys.path.append(".")

@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-from utils.initializers import he_orthogonal_init
+from .utils.initializers import he_orthogonal_init
     
 class Dense(torch.nn.Module):
     def __init__(
