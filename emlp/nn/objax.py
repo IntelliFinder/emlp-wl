@@ -713,9 +713,9 @@ class InvarianceLayer_objax(Module):
         #    n_in=30, n_out=1, n_hidden=n_hidden, n_layers=n_layers
         #) 
         
-        self.g = jnp.array([0,0,-1])
-        self.two_fdis = TwoFDisLayer(hidden_dim=32, n_rad=4)
-        self.output   = TwoOrderOutputBlock(hidden_dim=32, activation_fn=F.relu)
+        #self.g = jnp.array([0,0,-1])
+        self.two_fdis = TwoFDisLayer(hidden_dim=64, n_rad=16)
+        self.output   = TwoOrderOutputBlock(hidden_dim=64, activation_fn=F.relu)
 
     def H(self, x):
         out = self.two_fdis(scalars)
