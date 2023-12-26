@@ -469,7 +469,7 @@ def comp_dist_matrix_jax(x:jnp.array, g:jnp.array=jnp.array([0,0,-1])):
     norms = jnp.concatenate([two_zeros, norms, one_zero], axis=1)
     norms_diag = jnp.diagflat(norms)
     embed_diag = []
-    stride = norms.shape[1]
+    stride = mat.shape[1]
     for k in range(0, norms_diag.shape[0], stride):
         embed_diag.append( jnp.expand_dims(norms_diag[k:(k+stride), k:(k+stride)], axis=0)  )#TODO: finish unpacking block diags
     norms_diag = jnp.concatenate(embed_diag, axis=0)
@@ -626,7 +626,7 @@ class TwoFDisLayer(Module): #TODO: test
         gamma = 2*(mmax - mmin)/(nrad - 1)
         mu    = jnp.linspace(start=mmin, stop=mmax, num=nrad)
         scalars = jnp.expand_dims(scalars, axis=-1) - jnp.expand_dims(mu, axis=0) #(n,16,n_rad)
-        scalars = jnp.exp(-gamma*(scalars**2)) #(n,16,n_rad)
+        scalars = jnp.cos(-gamma*(scalars)) #(n,16,n_rad)
         return scalars
 
     def forward(self,
@@ -656,6 +656,54 @@ class TwoFDisLayer(Module): #TODO: test
 
     def __call__(self,kemb: jnp.ndarray):
             return self.forward(kemb)
+
+class TwoFDisLayerTwo(Module): #TODO: test
+
+    def __init__(self,
+                 hidden_dim: int,
+                 activation_fn = F.relu,
+                 **kwargs
+                 ):
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+
+        self.emb_lin_0 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
+
+        self.emb_lin_1 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
+
+        self.emb_lin_2 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
+
+        self.output_lin = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim, final_lin=True)
+
+
+
+    def forward(self,
+                kemb: jnp.ndarray,
+                **kwargs
+                ):
+        '''
+            kemb: (B, N, N, hidden_dim)
+        '''
+
+        B = kemb.shape[0]
+        N = kemb.shape[1]
+
+        self_message, kemb_0, kemb_1 = self.emb_lin_0(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_1(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_2(jnp.copy(kemb).reshape(-1, self.hidden_dim))
+
+        self_message, kemb_0, kemb_1 = self_message.reshape((B,N,N,self.hidden_dim)), kemb_0.reshape((B,N,N,self.hidden_dim)), kemb_1.reshape((B,N,N,self.hidden_dim))
+
+        kemb_0, kemb_1 = (jnp.transpose(kemb_0, (0, 3, 1, 2)), jnp.transpose(kemb_1, (0, 3, 1, 2)))
+
+        kemb_multed = jnp.transpose(jnp.matmul(kemb_0, kemb_1), (0, 2, 3, 1))
+
+        kemb_out = self.output_lin(self_message * kemb_multed) + (self_message * kemb_multed)
+
+        return kemb_out
+
+    def __call__(self,kemb: jnp.ndarray):
+            return self.forward(kemb)
+
 
 def two_order_sumpool(kemb): #TODO test
   """Computes the second-order sum pool of a kernel embedding tensor.
@@ -714,13 +762,15 @@ class InvarianceLayer_objax(Module):
         #) 
         
         #self.g = jnp.array([0,0,-1])
-        self.two_fdis = TwoFDisLayer(hidden_dim=64, n_rad=16)
-        self.output   = TwoOrderOutputBlock(hidden_dim=64, activation_fn=F.relu)
+        self.two_fdis    = TwoFDisLayer(hidden_dim=12)
+        self.tw_fdis_two = TwoFDisLayerTwo(hidden_dim=12)
+        self.output      = TwoOrderOutputBlock(hidden_dim=12, activation_fn=F.relu)
 
     def H(self, x):
         out = self.two_fdis(scalars)
+        out = self.two_fdis_two(out)
         out = self.output(out)
-        return out#.sum() 
+        return out
         
     def __call__(self, x:jnp.ndarray):
         x = x.reshape(-1,4,3) # (n,4,3)
