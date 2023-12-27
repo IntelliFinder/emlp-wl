@@ -388,6 +388,22 @@ def radial_basis_transform_wl(x, nrad, mmin=0, mmax=10):
     scalars = jnp.expand_dims(scalars, axis=-1) - jnp.expand_dims(self.mu, axis=0) #(n,30,n_rad)
     return jnp.exp(-gamma*(scalars**2)) #(n,30,n_rad)
 
+class GaussianFourierProjection(Module):
+  """Gaussian Fourier embeddings for noise levels."""
+
+  def __init__(self, embedding_size=256, scale=1.0):
+    super().__init__()
+    self.embedding_size = embedding_size
+    self.weight = nn.Linear(embedding_size, 1, use_bias=False)
+
+  def __call__(self, x):
+    #apply dot product to get samples of cos and sin
+    x_proj = self.weight( x * 2 * jnp.pi )
+    print(x_proj.shape)
+    import sys
+    sys.exit("exit inside GaussFourierProj")
+    return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+
 
 def comp_inner_products(x, take_sqrt=True):
     """
@@ -562,8 +578,8 @@ class BasicMLP_objax_wl(Module):
     
     def __call__(self,x,training=True):
         return self.mlp(x)
-        
-@class BasicMLP_objax_wl(Module):
+@export        
+class BasicMLP_objax_wl(Module):
     def __init__(
         self,
         n_in,
@@ -610,6 +626,10 @@ class TwoFDisLayer(Module): #TODO: test
         super().__init__()
 
         self.hidden_dim = hidden_dim
+        
+        self.fourier    = GaussianFourierProjection(embedding_size=nrad)
+        
+        self.dist_linear = nn.Linear(nrad, hidden_dim, use_bias=False)
 
         self.emb_lin_0 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
 
@@ -627,9 +647,11 @@ class TwoFDisLayer(Module): #TODO: test
         mu    = jnp.linspace(start=mmin, stop=mmax, num=nrad)
         scalars = jnp.expand_dims(scalars, axis=-1) - jnp.expand_dims(mu, axis=0) #(n,16,n_rad)
         scalars = jnp.cos(-gamma*(scalars)) #(n,16,n_rad)
+        scalars = self.dist_linear(scalars)
+        
         return scalars
 
-    def forward(self,
+    def forward(self,4
                 dist_mat: jnp.ndarray,
                 **kwargs
                 ):
@@ -640,7 +662,10 @@ class TwoFDisLayer(Module): #TODO: test
         B = kemb.shape[0]
         N = kemb.shape[1]
         
-        kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim)
+        kemb = self.fourier(kemb)
+        import sys
+        sys.exit()
+        #kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim//3)
 
         self_message, kemb_0, kemb_1 = self.emb_lin_0(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_1(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_2(jnp.copy(kemb).reshape(-1, self.hidden_dim))
 
