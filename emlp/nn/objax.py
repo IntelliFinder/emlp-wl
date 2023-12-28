@@ -629,7 +629,7 @@ class TwoFDisLayer(Module): #TODO: test
         
         self.fourier    = GaussianFourierProjection(embedding_size=self.hidden_dim//3)
         
-        self.dist_linear = nn.Linear(nrad, hidden_dim, use_bias=False)
+        self.dist_linear = nn.Linear(2*(self.hidden_dim//3), hidden_dim, use_bias=False)
 
         self.emb_lin_0 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
 
