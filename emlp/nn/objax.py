@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
 import objax.nn as nn
+#import flax
+#from flax import linen as nn
 import objax.functional as F
 import numpy as np
 from emlp.reps import T,Rep,Scalar
@@ -394,15 +396,13 @@ class GaussianFourierProjection(Module):
   def __init__(self, embedding_size=256, scale=1.0):
     super().__init__()
     self.embedding_size = embedding_size
-    self.weight = nn.Linear(embedding_size, 1, use_bias=False)
+    initializer = jax.nn.initializers.he_normal()
+    self.weight = initializer(jax.random.PRNGKey(42), (1, embedding_size), jnp.float32)
 
   def __call__(self, x):
     #apply dot product to get samples of cos and sin
-    x_proj = self.weight( x * 2 * jnp.pi )
-    print(x_proj.shape)
-    import sys
-    sys.exit("exit inside GaussFourierProj")
-    return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+    x_proj = jnp.multiply(jnp.expand_dims(x, axis=-1) * 2 * jnp.pi, self.weight) 
+    return jnp.concatenate([jnp.sin(x_proj), jnp.cos(x_proj)], axis=-1)
 
 
 def comp_inner_products(x, take_sqrt=True):
@@ -627,7 +627,7 @@ class TwoFDisLayer(Module): #TODO: test
 
         self.hidden_dim = hidden_dim
         
-        self.fourier    = GaussianFourierProjection(embedding_size=nrad)
+        self.fourier    = GaussianFourierProjection(embedding_size=self.hidden_dim//3)
         
         self.dist_linear = nn.Linear(nrad, hidden_dim, use_bias=False)
 
@@ -646,7 +646,7 @@ class TwoFDisLayer(Module): #TODO: test
         gamma = 2*(mmax - mmin)/(nrad - 1)
         mu    = jnp.linspace(start=mmin, stop=mmax, num=nrad)
         scalars = jnp.expand_dims(scalars, axis=-1) - jnp.expand_dims(mu, axis=0) #(n,16,n_rad)
-        scalars = jnp.cos(-gamma*(scalars)) #(n,16,n_rad)
+        scalars = jnp.cos(-gamma*(scalars)) #
         scalars = self.dist_linear(scalars)
         
         return scalars
@@ -663,9 +663,8 @@ class TwoFDisLayer(Module): #TODO: test
         N = kemb.shape[1]
         
         kemb = self.fourier(kemb)
-        import sys
-        sys.exit()
-        #kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim//3)
+        kemb = self.dist_linear(kemb)
+#       kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim//3)
 
         self_message, kemb_0, kemb_1 = self.emb_lin_0(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_1(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_2(jnp.copy(kemb).reshape(-1, self.hidden_dim))
 
