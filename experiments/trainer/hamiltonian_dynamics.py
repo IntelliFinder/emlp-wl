@@ -197,6 +197,11 @@ class IntegratedDynamicsTrainer(Regressor):
         super().__init__(model,*args,**kwargs)
         self.loss = objax.Jit(self.loss,model.vars())
         self.gradvals = objax.Jit(objax.GradValues(self.loss,model.vars()))
+    
+    def clip_grad_norm(grad, max_norm):
+        norm = jnp.linalg.norm(jax.tree_util.tree_leaves(jax.tree_map(jnp.linalg.norm, grad)))
+        clip = lambda x: jnp.where(norm < max_norm, x, x * max_norm / (norm + 1e-6))
+        return jax.tree_util.tree_map(clip, grad)
 
     def loss(self, minibatch):
         """ Standard cross-entropy loss """

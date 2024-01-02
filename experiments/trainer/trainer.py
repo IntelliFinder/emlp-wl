@@ -11,7 +11,7 @@ import jax
 import logging
 from functools import partial
 import objax
-
+import jax.numpy as jnp
 class Trainer(object,metaclass=Named):
     """ Base trainer
         """
@@ -67,8 +67,18 @@ class Trainer(object,metaclass=Named):
 
     def step(self, epoch, minibatch):
         grad,loss = self.gradvals(minibatch)
+        max_norm = 1
+        new_grad = []
+        for item in grad:
+          new_grad.append(jnp.clip(item, a_min=-max_norm, a_max=max_norm))
+        grad = new_grad
         self.optimizer(self.lr_sched(epoch),grad)
         return loss
+        
+    def clip_grad_norm(self, grad, max_norm):
+        norm = jnp.linalg.norm(jax.tree_util.tree_leaves(jax.tree_map(jnp.linalg.norm, grad)))
+        clip = lambda x: jnp.where(norm < max_norm, x, x * max_norm / (norm + 1e-6))
+        return jax.tree_util.tree_map(clip, grad)
 
     def logStuff(self, step, minibatch=None):
         metrics = {}

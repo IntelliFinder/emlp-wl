@@ -565,13 +565,13 @@ class BasicMLP_objax_wl(Module):
         if not final_lin:
             for _ in range(n_layers-1):
                 layers.append(nn.Linear(n_hidden, n_hidden))
-                layers.append(F.relu)
+                layers.append(F.tanh)
             layers.append(nn.Linear(n_hidden, n_out))
-            layers.append(F.relu)
+            layers.append(F.silu)
         else:
             for _ in range(n_layers):
                 layers.append(nn.Linear(n_hidden, n_hidden))
-                layers.append(F.relu)
+                layers.append(F.silu)
             layers.append(nn.Linear(n_hidden, n_out))
         
         self.mlp = nn.Sequential(layers)
@@ -589,17 +589,17 @@ class BasicMLP_objax_wl(Module):
         final_lin=False
     ):
         super().__init__()
-        layers = [nn.Linear(n_in, n_hidden), F.relu]
+        layers = [nn.Linear(n_in, n_hidden), F.silu]
         if not final_lin:
             for _ in range(n_layers-1):
                 layers.append(nn.Linear(n_hidden, n_hidden))
-                layers.append(F.relu)
+                layers.append(F.silu)
             layers.append(nn.Linear(n_hidden, n_out))
-            layers.append(F.relu)
+            layers.append(F.silu)
         else:
             for _ in range(n_layers):
                 layers.append(nn.Linear(n_hidden, n_hidden))
-                layers.append(F.relu)
+                layers.append(F.silu)
             layers.append(nn.Linear(n_hidden, n_out))
 
         self.mlp = nn.Sequential(layers)
@@ -620,7 +620,7 @@ class TwoFDisLayer(Module): #TODO: test
 
     def __init__(self,
                  hidden_dim: int,
-                 activation_fn = F.relu,
+                 activation_fn = F.silu,
                  **kwargs
                  ):
         super().__init__()
@@ -630,7 +630,9 @@ class TwoFDisLayer(Module): #TODO: test
         self.fourier    = GaussianFourierProjection(embedding_size=self.hidden_dim//3)
         
         self.dist_linear = nn.Linear(2*(self.hidden_dim//3), hidden_dim, use_bias=False)
-
+        
+        self.dist_linear_rad = nn.Linear((self.hidden_dim//3), hidden_dim, use_bias=False)
+        
         self.emb_lin_0 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
 
         self.emb_lin_1 = BasicMLP_objax_wl(n_in=hidden_dim, n_out=hidden_dim)
@@ -647,7 +649,7 @@ class TwoFDisLayer(Module): #TODO: test
         mu    = jnp.linspace(start=mmin, stop=mmax, num=nrad)
         scalars = jnp.expand_dims(scalars, axis=-1) - jnp.expand_dims(mu, axis=0) #(n,16,n_rad)
         scalars = jnp.cos(-gamma*(scalars)) #
-        scalars = self.dist_linear(scalars)
+        scalars = self.dist_linear_rad(scalars)
         
         return scalars
 
@@ -662,9 +664,9 @@ class TwoFDisLayer(Module): #TODO: test
         B = kemb.shape[0]
         N = kemb.shape[1]
         
-        kemb = self.fourier(kemb)
-        kemb = self.dist_linear(kemb)
-#       kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim//3)
+        #kemb = self.fourier(kemb)
+        #kemb = self.dist_linear(kemb)
+        kemb = self.radial_basis_transform(kemb, nrad=self.hidden_dim//3)
 
         self_message, kemb_0, kemb_1 = self.emb_lin_0(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_1(jnp.copy(kemb).reshape(-1, self.hidden_dim)), self.emb_lin_2(jnp.copy(kemb).reshape(-1, self.hidden_dim))
 
@@ -685,7 +687,7 @@ class TwoFDisLayerTwo(Module): #TODO: test
 
     def __init__(self,
                  hidden_dim: int,
-                 activation_fn = F.relu,
+                 activation_fn = F.silu,
                  **kwargs
                  ):
         super().__init__()
@@ -755,7 +757,7 @@ def two_order_sumpool(kemb): #TODO test
 class TwoOrderOutputBlock(Module):
     def __init__(self,
                  hidden_dim: int,
-                 activation_fn: F.relu
+                 activation_fn: F.silu
                  ):
         super().__init__()
         self.output_fn = BasicMLP_objax(n_in=2*hidden_dim, n_out=1)
@@ -786,9 +788,9 @@ class InvarianceLayer_objax(Module):
         #) 
         
         #self.g = jnp.array([0,0,-1])
-        self.two_fdis    = TwoFDisLayer(hidden_dim=12)
-        self.tw_fdis_two = TwoFDisLayerTwo(hidden_dim=12)
-        self.output      = TwoOrderOutputBlock(hidden_dim=12, activation_fn=F.relu)
+        self.two_fdis    = TwoFDisLayer(hidden_dim=64)
+        self.tw_fdis_two = TwoFDisLayerTwo(hidden_dim=64)
+        self.output      = TwoOrderOutputBlock(hidden_dim=64, activation_fn=F.silu)
 
     def H(self, x):
         out = self.two_fdis(scalars)
