@@ -67,7 +67,7 @@ class Trainer(object,metaclass=Named):
 
     def step(self, epoch, minibatch):
         grad,loss = self.gradvals(minibatch)
-        max_norm = 1
+        max_norm = 3
         new_grad = []
         for item in grad:
           new_grad.append(jnp.clip(item, a_min=-max_norm, a_max=max_norm))
